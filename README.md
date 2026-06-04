@@ -8,6 +8,77 @@ Works on: local machine, VPS, cloud VM, home server — anything with a shared f
 
 ---
 
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph AGENTS["Agents  (any language · any framework)"]
+        direction LR
+        A1("Agent A")
+        A2("Agent B")
+        AN("Agent N")
+    end
+
+    subgraph VAULT["  ~/memory/  —  Shared Vault  "]
+        direction TB
+        W["🌍  world/\npermanent facts\nserver map · secrets policy · architecture"]
+        I["🪪  identity/\nper-agent rules & behavior\nshared across all agents"]
+        S["⚡  state/\ncurrent reality\nagent snapshots · active tasks · locks/"]
+        B["📌  board/\nkanban tasks\nbacklog · in_progress · blocked · done"]
+        L["📋  log/\nappend-only history\nYYYY-MM.md  —  never overwrite"]
+    end
+
+    SYNC("sync-memory\nhook")
+    WD("lock-watchdog\ncron / 5 min")
+    ALERT(["webhook\nor Telegram"])
+
+    A1 -- "reads context" --> W & I
+    A1 -- "writes result" --> S
+    A1 -- "appends event" --> L
+    A2 -- "reads / moves tasks" --> B
+    AN -- "session end" --> SYNC
+    SYNC -- "promotes to" --> S
+    S -- "stale lock?" --> WD
+    WD -- "alert" --> ALERT
+
+    style VAULT fill:#1a1a2e,stroke:#4a4aff,color:#fff
+    style W fill:#0d3b66,stroke:#4a9eff,color:#cce
+    style I fill:#1a3a2a,stroke:#4aff88,color:#cec
+    style S fill:#3a1a1a,stroke:#ff6644,color:#ecc
+    style B fill:#2a2a1a,stroke:#ffcc44,color:#eed
+    style L fill:#2a1a3a,stroke:#cc88ff,color:#dce
+    style AGENTS fill:#111,stroke:#555,color:#aaa
+    style SYNC fill:#333,stroke:#888,color:#fff
+    style WD fill:#333,stroke:#888,color:#fff
+    style ALERT fill:#2a1a1a,stroke:#ff4444,color:#fcc
+```
+
+---
+
+## Vault layers
+
+```mermaid
+flowchart LR
+    subgraph R["  Mutation Rate  "]
+        direction TB
+        R1["🔵  Rarely\n\nworld/\nServer facts that\nalmost never change"]
+        R2["🟢  Occasionally\n\nidentity/\nAgent rules updated\nwhen behavior changes"]
+        R3["🟡  Frequently\n\nstate/ + board/\nTask status, agent\nsnapshots, lock files"]
+        R4["🔴  Always\n\nlog/\nEvery action appended.\nNever overwrite."]
+    end
+
+    INDEX("index.md\n─────────\nDense entry point\n< 500 chars\nAgent reads this first") --> R1 & R2 & R3 & R4
+
+    style INDEX fill:#1a1a2e,stroke:#4a4aff,color:#fff
+    style R1 fill:#0d3b66,stroke:#4a9eff,color:#cce
+    style R2 fill:#1a3a2a,stroke:#4aff88,color:#cec
+    style R3 fill:#3a2a1a,stroke:#ffcc44,color:#eed
+    style R4 fill:#3a1a1a,stroke:#ff4444,color:#fcc
+    style R fill:#111,stroke:#444,color:#aaa
+```
+
+---
+
 ## The problem
 
 Most AI agent frameworks give each agent its own isolated memory file. When you run multiple agents — or the same agent across sessions — they forget everything, repeat work, and have no shared context.
