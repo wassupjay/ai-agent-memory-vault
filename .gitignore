@@ -1,0 +1,23 @@
+# Secrets — never commit
+.secrets/
+*.env
+master.env
+*.key
+*.pem
+
+# Agent state — personal, changes constantly
+memory-vault/state/agents/
+memory-vault/log/
+memory-vault/state/shared/locks/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Misc
+.DS_Store
+*.swp

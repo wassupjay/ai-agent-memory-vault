@@ -1,0 +1,256 @@
+#!/usr/bin/env python3
+"""
+board — CLI for ~/memory/board task management
+Any agent (Hermes, Claude, OpenClaw, sub-agents) calls this via shell.
+
+Usage:
+  board add <title> [--priority high|medium|low] [--agent <name>] [--links "[[x]] [[y]]"]
+  board move <TASK-ID> <backlog|in_progress|blocked|done>
+  board update <TASK-ID> --log "<entry>"
+  board list [backlog|in_progress|blocked|done]
+  board show <TASK-ID>
+  board next                    # show highest priority unclaimed task
+"""
+
+import sys
+import os
+import re
+import json
+import argparse
+from pathlib import Path
+from datetime import datetime, timezone
+
+VAULT = Path.home() / "memory"
+BOARD = VAULT / "board"
+LOG = VAULT / "log"
+
+STATUS_FILES = {
+    "backlog":     BOARD / "backlog.md",
+    "in_progress": BOARD / "in_progress.md",
+    "blocked":     BOARD / "blocked.md",
+}
+
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def ts():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
+def next_task_id():
+    max_id = 0
+    for f in BOARD.rglob("*.md"):
+        for m in re.finditer(r"TASK-(\d+)", f.read_text()):
+            max_id = max(max_id, int(m.group(1)))
+    done_dir = BOARD / "done"
+    if done_dir.exists():
+        for f in done_dir.rglob("*.md"):
+            for m in re.finditer(r"TASK-(\d+)", f.read_text()):
+                max_id = max(max_id, int(m.group(1)))
+    return f"TASK-{max_id + 1:03d}"
+
+
+def parse_tasks_from_file(filepath):
+    if not filepath.exists():
+        return []
+    tasks = []
+    current = None
+    with open(filepath) as f:
+        for line in f:
+            line = line.rstrip()
+            m = re.match(r"^## \[(TASK-\d+)\] (.+)$", line)
+            if m:
+                if current:
+                    tasks.append(current)
+                current = {"id": m.group(1), "title": m.group(2), "log": [], "_file": str(filepath)}
+            elif current:
+                kv = re.match(r"^(\w+): (.+)$", line)
+                if kv:
+                    current[kv.group(1)] = kv.group(2)
+                elif line.startswith("- "):
+                    current["log"].append(line[2:])
+    if current:
+        tasks.append(current)
+    return tasks
+
+
+def find_task(task_id):
+    all_files = list(STATUS_FILES.values())
+    done_dir = BOARD / "done"
+    if done_dir.exists():
+        all_files.extend(done_dir.glob("*.md"))
+    for f in all_files:
+        for task in parse_tasks_from_file(f):
+            if task["id"] == task_id:
+                return task, f
+    return None, None
+
+
+def read_file(path):
+    return path.read_text() if path.exists() else ""
+
+
+def write_file(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+
+
+def append_log(msg):
+    logfile = LOG / f"{datetime.now().strftime('%Y-%m')}.md"
+    with open(logfile, "a") as f:
+        f.write(f"{msg}\n")
+
+
+def cmd_add(args):
+    task_id = next_task_id()
+    agent = args.agent or "unassigned"
+    priority = args.priority or "medium"
+    links = args.links or ""
+    now = datetime.now().strftime("%Y-%m-%d")
+    block = f"""
+## [{task_id}] {args.title}
+status: backlog
+priority: {priority}
+agent: {agent}
+created: {now}
+{"links: " + links if links else ""}
+log:
+"""
+    dest = STATUS_FILES["backlog"]
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "a") as f:
+        f.write(block)
+    append_log(f"[{ts()}][{agent}] {task_id} added to backlog: {args.title}")
+    print(json.dumps({"ok": True, "task_id": task_id, "status": "backlog"}))
+
+
+def cmd_move(args):
+    task_id = args.task_id.upper()
+    new_status = args.status
+
+    if new_status not in {*STATUS_FILES.keys(), "done"}:
+        print(json.dumps({"ok": False, "error": f"unknown status: {new_status}"}))
+        sys.exit(1)
+
+    task, source_file = find_task(task_id)
+    if not task:
+        print(json.dumps({"ok": False, "error": f"{task_id} not found"}))
+        sys.exit(1)
+
+    content = read_file(source_file)
+    pattern = rf"(## \[{re.escape(task_id)}\].*?)(?=\n## \[|\Z)"
+    m = re.search(pattern, content, re.DOTALL)
+    if not m:
+        print(json.dumps({"ok": False, "error": "parse error"}))
+        sys.exit(1)
+
+    block = m.group(1).strip()
+    block = re.sub(r"^status: \w+", f"status: {new_status}", block, flags=re.MULTILINE)
+    new_content = re.sub(pattern, "", content, flags=re.DOTALL).strip()
+    write_file(source_file, new_content + "\n")
+
+    if new_status == "done":
+        dest = BOARD / "done" / f"{datetime.now().strftime('%Y-%m')}.md"
+    else:
+        dest = STATUS_FILES[new_status]
+
+    with open(dest, "a") as f:
+        f.write(f"\n{block}\n")
+
+    agent = task.get("agent", "unknown")
+    append_log(f"[{ts()}][{agent}] {task_id} moved → {new_status}")
+    print(json.dumps({"ok": True, "task_id": task_id, "status": new_status}))
+
+
+def cmd_update(args):
+    task_id = args.task_id.upper()
+    task, source_file = find_task(task_id)
+    if not task:
+        print(json.dumps({"ok": False, "error": f"{task_id} not found"}))
+        sys.exit(1)
+
+    content = read_file(source_file)
+    entry = f"- {ts()} {args.log}"
+    pattern = rf"(## \[{re.escape(task_id)}\].*?)(?=\n## \[|\Z)"
+    m = re.search(pattern, content, re.DOTALL)
+    block = m.group(1).rstrip() + f"\n{entry}"
+    new_content = re.sub(pattern, block, content, flags=re.DOTALL)
+    write_file(source_file, new_content)
+
+    agent = task.get("agent", "unknown")
+    append_log(f"[{ts()}][{agent}] {task_id} updated: {args.log}")
+    print(json.dumps({"ok": True, "task_id": task_id}))
+
+
+def cmd_list(args):
+    status = args.status
+    files = STATUS_FILES.values() if not status else [STATUS_FILES.get(status, BOARD / f"{status}.md")]
+    tasks = []
+    for f in files:
+        tasks.extend(parse_tasks_from_file(f))
+    for t in tasks:
+        t.pop("_file", None)
+    print(json.dumps(tasks, indent=2))
+
+
+def cmd_show(args):
+    task_id = args.task_id.upper()
+    task, _ = find_task(task_id)
+    if not task:
+        print(json.dumps({"ok": False, "error": f"{task_id} not found"}))
+        sys.exit(1)
+    task.pop("_file", None)
+    print(json.dumps(task, indent=2))
+
+
+def cmd_next(args):
+    tasks = []
+    for f in STATUS_FILES["backlog"], STATUS_FILES["in_progress"]:
+        tasks.extend(parse_tasks_from_file(f))
+    unclaimed = [t for t in tasks if t.get("agent", "unassigned") == "unassigned"]
+    if not unclaimed:
+        print(json.dumps({"ok": True, "task": None, "message": "no unclaimed tasks"}))
+        return
+    unclaimed.sort(key=lambda t: PRIORITY_ORDER.get(t.get("priority", "medium"), 1))
+    best = unclaimed[0]
+    best.pop("_file", None)
+    print(json.dumps({"ok": True, "task": best}))
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="board")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_add = sub.add_parser("add")
+    p_add.add_argument("title")
+    p_add.add_argument("--priority", choices=["high", "medium", "low"], default="medium")
+    p_add.add_argument("--agent", default="unassigned")
+    p_add.add_argument("--links", default="")
+
+    p_move = sub.add_parser("move")
+    p_move.add_argument("task_id")
+    p_move.add_argument("status")
+
+    p_update = sub.add_parser("update")
+    p_update.add_argument("task_id")
+    p_update.add_argument("--log", required=True)
+
+    p_list = sub.add_parser("list")
+    p_list.add_argument("status", nargs="?")
+
+    p_show = sub.add_parser("show")
+    p_show.add_argument("task_id")
+
+    sub.add_parser("next")
+
+    args = parser.parse_args()
+    if not args.cmd:
+        parser.print_help()
+        sys.exit(1)
+
+    {"add": cmd_add, "move": cmd_move, "update": cmd_update,
+     "list": cmd_list, "show": cmd_show, "next": cmd_next}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()

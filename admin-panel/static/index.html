@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — jayanth.dev</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  /* Nav */
+  nav { background: #1a1d27; border-bottom: 1px solid #2d3148; padding: 0 24px; display: flex; align-items: center; gap: 0; height: 52px; }
+  nav h1 { font-size: 15px; font-weight: 600; color: #a78bfa; margin-right: 32px; letter-spacing: -0.3px; }
+  nav button { background: none; border: none; color: #8892a4; padding: 16px 16px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; transition: all 0.15s; }
+  nav button:hover { color: #e2e8f0; }
+  nav button.active { color: #a78bfa; border-bottom-color: #a78bfa; }
+
+  /* Views */
+  .view { display: none; padding: 24px; }
+  .view.active { display: block; }
+
+  /* Board */
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .column { background: #1a1d27; border-radius: 10px; padding: 14px; min-height: 400px; }
+  .column h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #2d3148; }
+  .col-backlog h3 { color: #8892a4; }
+  .col-in_progress h3 { color: #60a5fa; }
+  .col-blocked h3 { color: #f87171; }
+  .col-done h3 { color: #4ade80; }
+  .task-card { background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 12px; margin-bottom: 8px; cursor: grab; transition: border-color 0.15s, transform 0.15s; }
+  .task-card:hover { border-color: #a78bfa; transform: translateY(-1px); }
+  .task-card.dragging { opacity: 0.5; transform: rotate(2deg); }
+  .task-id { font-size: 10px; color: #4b5563; font-family: monospace; margin-bottom: 4px; }
+  .task-title { font-size: 13px; font-weight: 500; margin-bottom: 8px; line-height: 1.4; }
+  .task-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 10px; padding: 2px 7px; border-radius: 999px; font-weight: 500; }
+  .badge-high { background: #7f1d1d; color: #fca5a5; }
+  .badge-medium { background: #78350f; color: #fcd34d; }
+  .badge-low { background: #1e3a5f; color: #93c5fd; }
+  .badge-agent { background: #2d1b69; color: #c4b5fd; }
+  .column.drag-over { border: 1px dashed #a78bfa; background: #1e1b3a; }
+
+  /* Graph */
+  #graph-container { background: #1a1d27; border-radius: 10px; height: calc(100vh - 120px); position: relative; overflow: hidden; }
+  #graph-svg { width: 100%; height: 100%; }
+  .node circle { stroke-width: 2; cursor: pointer; transition: r 0.2s; }
+  .node text { font-size: 10px; fill: #8892a4; pointer-events: none; }
+  .link { stroke: #2d3148; stroke-opacity: 0.6; }
+  #node-detail { position: absolute; top: 16px; right: 16px; width: 280px; background: #0f1117; border: 1px solid #2d3148; border-radius: 8px; padding: 16px; display: none; max-height: 80%; overflow-y: auto; }
+  #node-detail h4 { font-size: 13px; color: #a78bfa; margin-bottom: 8px; }
+  #node-detail p { font-size: 12px; color: #8892a4; line-height: 1.6; white-space: pre-wrap; }
+  .graph-legend { position: absolute; bottom: 16px; left: 16px; display: flex; gap: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8892a4; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* Crons */
+  .crons-table { width: 100%; border-collapse: collapse; }
+  .crons-table th { text-align: left; font-size: 11px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.6px; padding: 10px 14px; border-bottom: 1px solid #2d3148; }
+  .crons-table td { padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #1a1d27; }
+  .crons-table tr:hover td { background: #1a1d27; }
+  .cron-id { font-family: monospace; font-size: 11px; color: #4b5563; }
+  .cron-schedule { font-family: monospace; font-size: 12px; color: #fcd34d; }
+
+  /* Log */
+  .log-filter { margin-bottom: 16px; display: flex; gap: 8px; }
+  .log-filter input { background: #1a1d27; border: 1px solid #2d3148; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 13px; width: 240px; outline: none; }
+  .log-filter input:focus { border-color: #a78bfa; }
+  .log-entry { font-family: monospace; font-size: 12px; padding: 6px 0; border-bottom: 1px solid #1a1d27; color: #8892a4; line-height: 1.5; }
+  .log-entry .ts { color: #4b5563; }
+  .log-entry .agent { color: #a78bfa; }
+  .log-entry .msg { color: #c4b5fd; }
+
+  /* State */
+  .state-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .state-card { background: #1a1d27; border-radius: 8px; padding: 16px; }
+  .state-card h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: #a78bfa; margin-bottom: 10px; }
+  .state-card pre { font-size: 11px; color: #8892a4; white-space: pre-wrap; line-height: 1.6; }
+  .lock-badge { display: inline-block; background: #7f1d1d; color: #fca5a5; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-top: 4px; }
+
+  /* Shared */
+  .section-header { font-size: 18px; font-weight: 600; margin-bottom: 20px; color: #e2e8f0; }
+  .empty { color: #4b5563; font-size: 13px; padding: 20px; text-align: center; }
+  .refresh-btn { background: #2d1b69; color: #c4b5fd; border: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; float: right; }
+  .refresh-btn:hover { background: #3b2a7e; }
+</style>
+</head>
+<body>
+
+<nav>
+  <h1>⚡ admin.jayanth.dev</h1>
+  <button class="active" onclick="showView('board')">Board</button>
+  <button onclick="showView('graph')">Graph</button>
+  <button onclick="showView('crons')">Crons</button>
+  <button onclick="showView('log')">Log</button>
+  <button onclick="showView('state')">State</button>
+</nav>
+
+<!-- BOARD -->
+<div id="view-board" class="view active">
+  <div style="display:flex;align-items:center;margin-bottom:20px;">
+    <span class="section-header" style="margin:0">Task Board</span>
+    <button class="refresh-btn" onclick="loadBoard()">↻ Refresh</button>
+  </div>
+  <div class="board" id="board-cols">
+    <div class="column col-backlog" data-status="backlog" id="col-backlog"><h3>Backlog</h3></div>
+    <div class="column col-in_progress" data-status="in_progress" id="col-in_progress"><h3>In Progress</h3></div>
+    <div class="column col-blocked" data-status="blocked" id="col-blocked"><h3>Blocked</h3></div>
+    <div class="column col-done" data-status="done" id="col-done"><h3>Done</h3></div>
+  </div>
+</div>
+
+<!-- GRAPH -->
+<div id="view-graph" class="view">
+  <div style="display:flex;align-items:center;margin-bottom:16px;">
+    <span class="section-header" style="margin:0">Knowledge Graph</span>
+    <button class="refresh-btn" onclick="loadGraph()">↻ Refresh</button>
+  </div>
+  <div id="graph-container">
+    <svg id="graph-svg"></svg>
+    <div id="node-detail"><h4 id="nd-title"></h4><p id="nd-path"></p></div>
+    <div class="graph-legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div>world</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#60a5fa"></div>identity</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#4ade80"></div>board</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div>crons</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#8892a4"></div>log</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#f87171"></div>state</div>
+    </div>
+  </div>
+</div>
+
+<!-- CRONS -->
+<div id="view-crons" class="view">
+  <div style="display:flex;align-items:center;margin-bottom:20px;">
+    <span class="section-header" style="margin:0">Cron Registry</span>
+    <button class="refresh-btn" onclick="loadCrons()">↻ Refresh</button>
+  </div>
+  <table class="crons-table">
+    <thead><tr><th>ID</th><th>Name</th><th>Schedule</th><th>Owner</th><th>Command</th></tr></thead>
+    <tbody id="crons-body"></tbody>
+  </table>
+</div>
+
+<!-- LOG -->
+<div id="view-log" class="view">
+  <div style="display:flex;align-items:center;margin-bottom:16px;">
+    <span class="section-header" style="margin:0">Event Log</span>
+    <button class="refresh-btn" onclick="loadLog()">↻ Refresh</button>
+  </div>
+  <div class="log-filter">
+    <input type="text" id="log-filter" placeholder="Filter by agent or keyword..." oninput="filterLog()">
+  </div>
+  <div id="log-entries"></div>
+</div>
+
+<!-- STATE -->
+<div id="view-state" class="view">
+  <div style="display:flex;align-items:center;margin-bottom:20px;">
+    <span class="section-header" style="margin:0">Agent State</span>
+    <button class="refresh-btn" onclick="loadState()">↻ Refresh</button>
+  </div>
+  <div class="state-grid" id="state-grid"></div>
+</div>
+
+<script>
+const FOLDER_COLORS = {
+  world: '#a78bfa', identity: '#60a5fa', board: '#4ade80',
+  crons: '#fb923c', log: '#8892a4', state: '#f87171',
+  graph: '#fcd34d', root: '#6b7280'
+};
+
+let allLogEntries = [];
+let dragTask = null;
+
+// --- NAV ---
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'board') loadBoard();
+  if (name === 'graph') loadGraph();
+  if (name === 'crons') loadCrons();
+  if (name === 'log') loadLog();
+  if (name === 'state') loadState();
+}
+
+// --- BOARD ---
+async function loadBoard() {
+  const data = await fetch('/api/board').then(r => r.json());
+  ['backlog','in_progress','blocked','done'].forEach(status => {
+    const col = document.getElementById('col-' + status);
+    const header = col.querySelector('h3');
+    col.innerHTML = '';
+    col.appendChild(header);
+    const tasks = data[status] || [];
+    if (!tasks.length) { col.innerHTML += '<div class="empty">Empty</div>'; return; }
+    tasks.forEach(task => col.appendChild(makeCard(task)));
+  });
+  setupDragDrop();
+}
+
+function makeCard(task) {
+  const div = document.createElement('div');
+  div.className = 'task-card';
+  div.draggable = true;
+  div.dataset.taskId = task.id;
+  const priority = task.priority || 'medium';
+  const agent = task.agent || 'unassigned';
+  div.innerHTML = `
+    <div class="task-id">${task.id}</div>
+    <div class="task-title">${task.title}</div>
+    <div class="task-meta">
+      <span class="badge badge-${priority}">${priority}</span>
+      <span class="badge badge-agent">${agent}</span>
+    </div>`;
+  return div;
+}
+
+function setupDragDrop() {
+  document.querySelectorAll('.task-card').forEach(card => {
+    card.addEventListener('dragstart', e => { dragTask = card.dataset.taskId; card.classList.add('dragging'); });
+    card.addEventListener('dragend', e => card.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.column').forEach(col => {
+    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('drag-over'); });
+    col.addEventListener('dragleave', () => col.classList.remove('drag-over'));
+    col.addEventListener('drop', async e => {
+      e.preventDefault(); col.classList.remove('drag-over');
+      if (!dragTask) return;
+      const status = col.dataset.status;
+      await fetch(`/api/board/${dragTask}`, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({status}) });
+      loadBoard();
+    });
+  });
+}
+
+// --- GRAPH ---
+async function loadGraph() {
+  const data = await fetch('/api/graph').then(r => r.json());
+  const container = document.getElementById('graph-container');
+  const svg = d3.select('#graph-svg');
+  svg.selectAll('*').remove();
+  const W = container.clientWidth, H = container.clientHeight;
+
+  const inboundCount = {};
+  data.edges.forEach(e => { inboundCount[e.target] = (inboundCount[e.target] || 0) + 1; });
+
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(80))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collision', d3.forceCollide(20));
+
+  const g = svg.append('g');
+
+  svg.call(d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)));
+
+  const link = g.append('g').selectAll('line').data(data.edges).join('line').attr('class','link');
+
+  const node = g.append('g').selectAll('g').data(data.nodes).join('g').attr('class','node')
+    .call(d3.drag()
+      .on('start', (e,d) => { if(!e.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag', (e,d) => { d.fx=e.x; d.fy=e.y; })
+      .on('end', (e,d) => { if(!e.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+  node.append('circle')
+    .attr('r', d => 6 + Math.min((inboundCount[d.id]||0)*2, 12))
+    .attr('fill', d => FOLDER_COLORS[d.folder] || '#6b7280')
+    .attr('fill-opacity', 0.85)
+    .attr('stroke', d => FOLDER_COLORS[d.folder] || '#6b7280')
+    .on('click', (e, d) => showNodeDetail(d));
+
+  node.append('text').attr('x', 10).attr('dy', '0.35em').text(d => d.name);
+
+  sim.on('tick', () => {
+    link.attr('x1',d=>d.source.x).attr('y1',d=>d.source.y).attr('x2',d=>d.target.x).attr('y2',d=>d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+async function showNodeDetail(d) {
+  const detail = document.getElementById('node-detail');
+  document.getElementById('nd-title').textContent = d.name;
+  document.getElementById('nd-path').textContent = d.path;
+  detail.style.display = 'block';
+}
+
+// --- CRONS ---
+async function loadCrons() {
+  const data = await fetch('/api/crons').then(r => r.json());
+  const tbody = document.getElementById('crons-body');
+  tbody.innerHTML = '';
+  if (!data.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">No crons found</td></tr>'; return; }
+  data.forEach(c => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="cron-id">${c.id}</td><td>${c.name}</td><td class="cron-schedule">${c.schedule}</td><td>${c.owner}</td><td style="font-size:11px;color:#4b5563;font-family:monospace">${c.command}</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// --- LOG ---
+async function loadLog() {
+  allLogEntries = await fetch('/api/log').then(r => r.json());
+  renderLog(allLogEntries);
+}
+
+function renderLog(entries) {
+  const container = document.getElementById('log-entries');
+  container.innerHTML = '';
+  if (!entries.length) { container.innerHTML = '<div class="empty">No log entries</div>'; return; }
+  entries.forEach(line => {
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    const m = line.match(/^(\[[^\]]+\])(\[[^\]]+\])(.*)$/);
+    if (m) {
+      div.innerHTML = `<span class="ts">${m[1]}</span><span class="agent">${m[2]}</span><span class="msg">${m[3]}</span>`;
+    } else {
+      div.textContent = line;
+    }
+    container.appendChild(div);
+  });
+}
+
+function filterLog() {
+  const q = document.getElementById('log-filter').value.toLowerCase();
+  renderLog(q ? allLogEntries.filter(e => e.toLowerCase().includes(q)) : allLogEntries);
+}
+
+// --- STATE ---
+async function loadState() {
+  const data = await fetch('/api/state').then(r => r.json());
+  const grid = document.getElementById('state-grid');
+  grid.innerHTML = '';
+  const locks = data.locks || [];
+  delete data.locks;
+
+  Object.entries(data).forEach(([agent, content]) => {
+    const card = document.createElement('div');
+    card.className = 'state-card';
+    card.innerHTML = `<h4>${agent}</h4><pre>${content || 'empty'}</pre>`;
+    grid.appendChild(card);
+  });
+
+  if (locks.length) {
+    const card = document.createElement('div');
+    card.className = 'state-card';
+    card.innerHTML = `<h4>Active Locks</h4>` + locks.map(l =>
+      `<div style="margin-bottom:8px"><div style="font-size:13px">${l.agent}</div>
+       <div class="lock-badge">${l.age_seconds}s old</div>
+       <div style="font-size:11px;color:#4b5563;margin-top:4px">${l.content}</div></div>`
+    ).join('');
+    grid.appendChild(card);
+  }
+
+  if (!Object.keys(data).length && !locks.length) {
+    grid.innerHTML = '<div class="empty">No agent state files found</div>';
+  }
+}
+
+// Init
+loadBoard();
+</script>
+</body>
+</html>

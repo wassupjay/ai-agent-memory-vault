@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""
+sync-memory — runs on Hermes on_session_end hook.
+Promotes new facts from ~/.hermes/memories/MEMORY.md into ~/memory/ vault files.
+Safe: never overwrites vault, only appends/updates agent state file.
+"""
+
+import json
+import sys
+import hashlib
+from pathlib import Path
+from datetime import datetime, timezone
+
+HERMES_MEMORY = Path.home() / ".hermes" / "memories" / "MEMORY.md"
+VAULT = Path.home() / "memory"
+AGENT_STATE = VAULT / "state" / "agents" / "hermes.md"
+SYNC_HASH = Path.home() / ".hermes" / "memories" / ".memory_sync_hash"
+LOG = VAULT / "log" / f"{datetime.now().strftime('%Y-%m')}.md"
+
+
+def ts():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
+def current_hash(content):
+    return hashlib.md5(content.encode()).hexdigest()
+
+
+def append_log(msg):
+    if LOG.exists():
+        with open(LOG, "a") as f:
+            f.write(f"{msg}\n")
+
+
+def main():
+    if not HERMES_MEMORY.exists():
+        sys.exit(0)
+
+    content = HERMES_MEMORY.read_text().strip()
+    new_hash = current_hash(content)
+
+    # Read last known hash
+    old_hash = SYNC_HASH.read_text().strip() if SYNC_HASH.exists() else ""
+
+    if new_hash == old_hash:
+        # Memory unchanged — nothing to do
+        sys.exit(0)
+
+    # Memory changed — update agent state file in vault
+    AGENT_STATE.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_STATE.write_text(f"# Hermes Agent State\n_last_synced: {ts()}_\n\n{content}\n")
+
+    # Save new hash
+    SYNC_HASH.write_text(new_hash)
+
+    # Log the sync event
+    append_log(f"[{ts()}][hermes] memory synced to vault (state/agents/hermes.md)")
+
+    # Output JSON for Hermes hook system
+    print(json.dumps({"ok": True, "synced": True}))
+
+
+if __name__ == "__main__":
+    main()
