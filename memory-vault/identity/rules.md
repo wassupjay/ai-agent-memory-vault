@@ -15,7 +15,7 @@
 
 ## Memory
 - Vault entry point: ~/memory/index.md
-- Read world/ files for VPS facts
+- Read world/ files for machine facts
 - Append to log/YYYY-MM.md after significant actions: `[timestamp][agent] what happened`
 - Before creating cron/heartbeat: check ~/memory/crons/registry.md for duplicates
 
@@ -32,4 +32,4 @@
 - CLI: `~/bin/board` — works for all agents
 
 ## New Projects
-- All new projects under ~/home/projects/ only
+- Keep all new projects under a consistent root (e.g. ~/projects/)

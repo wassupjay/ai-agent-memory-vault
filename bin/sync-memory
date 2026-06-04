@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
 """
-sync-memory — runs on Hermes on_session_end hook.
-Promotes new facts from ~/.hermes/memories/MEMORY.md into ~/memory/ vault files.
-Safe: never overwrites vault, only appends/updates agent state file.
+sync-memory — runs on agent session-end hook.
+Promotes short-term agent memory into the shared ~/memory/ vault.
+Safe: never overwrites vault, only updates the agent's state file.
+
+Configuration (set as environment variables or edit defaults below):
+  AGENT_NAME          — name of the agent (default: "agent")
+  AGENT_MEMORY_FILE   — path to agent's own memory file (default: ~/.agent/memory.md)
+  VAULT_DIR           — path to the shared vault (default: ~/memory)
 """
 
 import json
 import sys
 import hashlib
+import os
 from pathlib import Path
 from datetime import datetime, timezone
 
-HERMES_MEMORY = Path.home() / ".hermes" / "memories" / "MEMORY.md"
-VAULT = Path.home() / "memory"
-AGENT_STATE = VAULT / "state" / "agents" / "hermes.md"
-SYNC_HASH = Path.home() / ".hermes" / "memories" / ".memory_sync_hash"
+# --- Configuration via env vars ---
+AGENT_NAME = os.environ.get("AGENT_NAME", "agent")
+AGENT_MEMORY = Path(
+    os.environ.get("AGENT_MEMORY_FILE", str(Path.home() / f".{AGENT_NAME}" / "memory.md"))
+).expanduser()
+VAULT = Path(os.environ.get("VAULT_DIR", str(Path.home() / "memory"))).expanduser()
+
+AGENT_STATE = VAULT / "state" / "agents" / f"{AGENT_NAME}.md"
+SYNC_HASH = AGENT_MEMORY.parent / f".{AGENT_NAME}_sync_hash"
 LOG = VAULT / "log" / f"{datetime.now().strftime('%Y-%m')}.md"
 
 
@@ -22,7 +33,7 @@ def ts():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
-def current_hash(content):
+def md5(content):
     return hashlib.md5(content.encode()).hexdigest()
 
 
@@ -33,31 +44,27 @@ def append_log(msg):
 
 
 def main():
-    if not HERMES_MEMORY.exists():
+    if not AGENT_MEMORY.exists():
+        print(json.dumps({"ok": True, "synced": False, "reason": "no memory file found"}))
         sys.exit(0)
 
-    content = HERMES_MEMORY.read_text().strip()
-    new_hash = current_hash(content)
-
-    # Read last known hash
+    content = AGENT_MEMORY.read_text().strip()
+    new_hash = md5(content)
     old_hash = SYNC_HASH.read_text().strip() if SYNC_HASH.exists() else ""
 
     if new_hash == old_hash:
-        # Memory unchanged — nothing to do
+        print(json.dumps({"ok": True, "synced": False, "reason": "unchanged"}))
         sys.exit(0)
 
-    # Memory changed — update agent state file in vault
+    # Memory changed — promote to vault
     AGENT_STATE.parent.mkdir(parents=True, exist_ok=True)
-    AGENT_STATE.write_text(f"# Hermes Agent State\n_last_synced: {ts()}_\n\n{content}\n")
-
-    # Save new hash
+    AGENT_STATE.write_text(
+        f"# {AGENT_NAME.capitalize()} Agent State\n_last_synced: {ts()}_\n\n{content}\n"
+    )
     SYNC_HASH.write_text(new_hash)
+    append_log(f"[{ts()}][{AGENT_NAME}] memory synced to vault (state/agents/{AGENT_NAME}.md)")
 
-    # Log the sync event
-    append_log(f"[{ts()}][hermes] memory synced to vault (state/agents/hermes.md)")
-
-    # Output JSON for Hermes hook system
-    print(json.dumps({"ok": True, "synced": True}))
+    print(json.dumps({"ok": True, "synced": True, "agent": AGENT_NAME}))
 
 
 if __name__ == "__main__":
